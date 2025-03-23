@@ -1,0 +1,852 @@
+﻿@page "/faction"
+@rendermode InteractiveServer
+@using System.Globalization
+@using System.Text
+@using Components.Models
+
+<PageTitle>Faction OCs</PageTitle>
+<h1>Faction</h1>
+
+<p role="status"></p>
+
+<InputText type="password" placeholder="API-Key" @bind-Value="@apikey"/>
+<button class="btn btn-primary" @onclick="LoadOcDataFromApi">Load OCs from API</button>
+<div style="margin-top:0.5em">
+    <button class="btn btn-primary" @onclick="DownloadFullOcCsv">Download OC data</button>
+    <!--<button class="btn btn-primary" @onclick="DownloadFullOcJson">Download full OC sources (JSON)</button>-->
+    <button class="btn btn-primary" @onclick="DownloadCurrentOcChancesForAllUsersCsv">Download Best per User</button>
+    <div>
+        <button @onclick="(() => changeOcView(OcViews.allOcs))">show all OCs</button>
+        <div>
+            <button @onclick="(() => changeOcView(OcViews.tieredUsers))">Plan Users for OC</button>
+            <select @onchange="HandleOCSelectionChange">
+                <option id="option-default" selected hidden>Choose an OC</option>
+                @for (int i = 0; i < ocDifficultyMap.Count; i++)
+                {
+                    <option value="@ocDifficultyMap.GetKeyAtIndex(i)">@ocDifficultyMap.GetKeyAtIndex(i) (@ocDifficultyMap[ocDifficultyMap.GetKeyAtIndex(i)])</option>
+                }
+            </select>
+        </div>
+        <!--<button @onclick="SetOcTestData">Use OC Test Data</button>-->
+    </div>
+</div>
+@if (showAllOcsTable)
+{
+    <table>
+        <thead>
+            @if (Crimes.Count != null && Crimes.Count > 0)
+            {
+                <tr>
+                    <th style="cursor:pointer" width="500" @onclick="OrderCrimesByName">OC-Name</th>
+                    <th style="cursor:pointer" width="40" @onclick="OrderCrimesByLvl">Lvl</th>
+                    <th style="cursor:pointer" width="200" @onclick="OrderCrimesByRewards">Reward</th>
+                    <th style="cursor:pointer" width="300" @onclick="OrderCrimesByTime">Completion Time</th>
+                </tr>
+            }
+        </thead>
+        <tbody>
+            @foreach (CrimeContainer? container in Crimes)
+            {
+                <tr style="cursor:pointer" @onclick="()=>container.opened=!container.opened">
+                    <td>@container.crime.name</td>
+                    <td>@container.crime.difficulty</td>
+                    @if (container.crime.status != "Failure")
+                    {
+                        if (container.crime.rewards.money > 0)
+                        {
+                            <td>@container.crime.rewards.money.Value.ToString("C0", System.Globalization.CultureInfo.GetCultureInfo("en-US"))</td>
+                        }
+                        else
+                        {
+                            @if (itemNamesMap.ContainsKey(container.crime.rewards.items[0].id))
+                            {
+                                <td>@container.crime.rewards.items[0].quantity x @itemNamesMap[container.crime.rewards.items[0].id] </td>
+                            }
+                            else
+                            {
+                                <td>@container.crime.rewards.items[0].quantity x @@ItemID @container.crime.rewards.items[0].id] </td>
+                            }
+                        }
+                    }
+                    else
+                    {
+                        <td>/</td>
+                    }
+                    <td>@DateTime.UnixEpoch.AddSeconds(Convert.ToDouble(container.crime.executed_at))</td>
+                </tr>
+                @if (container.opened)
+                {
+                    <tr>
+                        <td>
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th width="300">User</th>
+                                        <th width="150">Position</th>
+                                        <th width="200">Success Chance</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (CrimeSlot? crimeSlot in container.crime.slots)
+                                    {
+                                        <tr>
+                                            @if (usernameMap.ContainsKey(crimeSlot.user_id))
+                                            {
+                                                <td>@usernameMap[crimeSlot.user_id]</td>
+                                            }
+                                            else
+                                            {
+                                                <td>User @crimeSlot.user_id left the faction</td>
+                                            }
+                                            <td>@crimeSlot.position</td>
+                                            <td>@crimeSlot.success_chance</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </td>
+                    </tr>
+                }
+            }
+        </tbody>
+    </table>
+}
+
+@if (showTieredUserOverview)
+{
+    <div class="floatDiv">
+        <div>T @ocDifficultyMap[currentTargetOc] - @currentTargetOc</div>
+        <div>TEAMS</div>
+        <table class="selectionTable">
+            <thead>
+                <tr>
+                    @foreach (string positionName in ocPositionsMap[currentTargetOc])
+                    {
+                        <th>@positionName</th>
+                    }
+
+                </tr>
+            </thead>
+            <tbody>
+                @for (int i = 0; i < OcSlotsAssigned.GetLength(0); i++)
+                {
+                    int copyI = i;
+                    <tr>
+                        @for (int j = 0; j < ocPositionsMap[currentTargetOc].Count(); j++)
+                        {
+                            int copyJ = j;
+                            <td>
+                                <select id="SELECT-USERS-@copyI-@copyJ" @onchange="HandleUserSelectionChange">
+                                    <option id="option-default" selected hidden></option>
+                                    @for (int k = 0; k < getCrimeSlotsForPosition(ocPositionsMap[currentTargetOc][copyJ], ocDifficultyMap[currentTargetOc], copyJ).Count; k++)
+                                    {
+                                        List<CrimeSlot> slots = getCrimeSlotsForPosition(ocPositionsMap[currentTargetOc][copyJ], ocDifficultyMap[currentTargetOc], copyJ);
+                                        int copyK = k;
+                                        int currentUserId = OcSlotsAssigned[copyI, copyJ];
+                                        List<int> localAssignees = assignedUsers.ToList();
+                                        /*@foreach (int assignee in assignedUsers)
+                                        {
+                                            localAssignees.Add(assignee);
+                                            }*/
+                                        //List<int> localAssignees = new List<int>();
+                                        //localAssignees.Add(2659469);
+                                        //localAssignees.Add(2665634);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        if (currentUserId > 0)
+                                        {
+                                            //localAssignees.Remove(currentUserId);
+                                        }
+                                        //if (!localAssignees.Contains(slots[copyK].user_id) || currentUserId == slots[copyK].user_id)
+                                        //{
+                                        //if (!localAssignees.Contains(slots[copyK].user_id))
+                                        //{
+                                        <option id="option-@copyI-@copyJ-@copyK" value="@getUsernameFor(slots[copyK].user_id),@slots[copyK].user_id,@copyI,@copyJ">@getUsernameFor(slots[copyK].user_id) - @slots[copyK].success_chance</option>
+                                        //}
+                                    }
+                                </select>
+                            </td>
+                        }
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="floatDiv">
+        <div>Available Members</div>
+        <div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>Roles</th>
+                        <th>Missing</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (int userId in availableUsers)
+                    {
+                        if (!assignedUsers.Contains(userId))
+                        {
+                            <tr>
+                                <td>@getUsernameFor(userId)</td>
+                                <!--<td>@stringifyRoles(getRollsOfUserForCrime(userId, ocDifficultyMap[currentTargetOc]))</td>-->
+                                <td>@for (int i = 0; i < getRollsOfUserForCrime(userId, ocDifficultyMap[currentTargetOc]).Count(); i++)
+                                    {
+                                        <span>@getRollsOfUserForCrime(userId, ocDifficultyMap[currentTargetOc])[i].position - @getRollsOfUserForCrime(userId, ocDifficultyMap[currentTargetOc])[i].success_chance</span>
+                                        if (i < getRollsOfUserForCrime(userId, ocDifficultyMap[currentTargetOc]).Count() - 1)
+                                        {
+                                            <br />
+                                        }
+                                    }
+                                </td>
+
+                                <td>@for (int i = 0; i < missingRolesOfUser[userId].Count(); i++)
+                                    {
+                                        <span>@missingRolesOfUser[userId][i]</span>
+                                        @if (i < missingRolesOfUser[userId].Count() - 1)
+                                        {
+                                            <br />
+                                        }
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+}
+<script src="../Components/Pages/Faction.razor.js"></script>
+
+@code {
+    string apikey = "";
+    List<CrimeContainer>? Crimes = new List<CrimeContainer>();
+    List<int> crimeIdList = new List<int>();
+    int[,] OcSlotsAssigned;
+    List<int> assignedUsers;
+    List<int> availableUsers;
+    string currentTargetOc = "";
+    List<EmancipatedCrimeSlot> currentUserOcResults = new();
+    SortedList<int, List<string>> missingRolesOfUser = new();
+    //string[] t8Positions = { "Robber", "Thief", "Thief", "Muscle", "Muscle", "Muscle" };
+
+    SortedList<string, string[]> ocPositionsMap = new()
+    {
+        {"Break The Bank", new string[]{ "Robber", "Thief", "Thief", "Muscle", "Muscle", "Muscle" }},
+        {"Blast From The Past", new string[]{ "Bomber", "Engineer", "Hacker", "Muscle", "Picklock", "Picklock" }}
+    };
+    SortedList<string, int> ocDifficultyMap = new()
+    {
+        { "Break The Bank", 8},
+        { "Blast From The Past", 7}
+    };
+
+    private async Task removeSelectedOptionFromOtherSelects(string username, string oldUsername, string sourceId)
+    {
+        await JS.InvokeVoidAsync("hideOptionExceptForSource", username, oldUsername, sourceId);
+    }
+
+    private List<string> getTotalAvailableUserNames()
+    {
+        List<string> results = new();
+        foreach(int userId in availableUsers)
+        {
+            if (!assignedUsers.Contains(userId))
+            {
+                results.Add(getUsernameFor(userId));
+            }
+        }
+        return results;
+    }
+
+    private async void HandleUserSelectionChange(ChangeEventArgs e)
+    {
+        //value="@getUsernameFor(slots[copyK].user_id),@slots[copyK].user_id,@copyI,@copyJ,@copyK">
+        int[] selectedOption = new int[3];
+        string[] splittedOptions = ((String)e.Value).Split(new string[] { "," }, StringSplitOptions.None);
+        string username = splittedOptions[0];
+        string oldUsername = "";
+        for (int i = 1; i < 4; i++)
+        {
+            selectedOption[i-1] = int.Parse(splittedOptions[i]);
+        }
+        int newUserId = selectedOption[0];
+        int crimeRow = selectedOption[1];
+        int crimeColumn = selectedOption[2];
+        if (OcSlotsAssigned[crimeRow, crimeColumn] != 0)
+        {
+            int oldUserId = OcSlotsAssigned[crimeRow, crimeColumn];
+            assignedUsers.Remove(oldUserId);
+            oldUsername = getUsernameFor(oldUserId);
+
+        }
+        // id="option-@copyI-@copyJ
+        await removeSelectedOptionFromOtherSelects(username, oldUsername, $"option-{crimeRow}-{crimeColumn}");
+        assignedUsers.Add(newUserId);
+        OcSlotsAssigned[crimeRow, crimeColumn] = newUserId;
+        this.StateHasChanged();
+    }
+
+    private void HandleOCSelectionChange(ChangeEventArgs e)
+    {
+        currentTargetOc = e.Value.ToString();
+    }
+
+    List<CrimeSlot> getCrimeSlotsForPosition(string position, int difficulty, int j)
+    {
+        List<CrimeSlot> results = new();
+        foreach(int userId in availableUsers)
+        {
+            CrimeSlot slot = getRollsOfUserForCrime(userId, difficulty).Where(x => x.position.Equals(position)).DefaultIfEmpty(null).FirstOrDefault();
+            if (slot != null)
+            {
+                results.Add(slot);
+            }
+        }
+        return results.OrderByDescending(x => x.success_chance).ToList();
+    }
+
+    List<CrimeSlot> getRollsOfUserForCrime(int userId, int difficulty)
+    {
+        StringBuilder result = new();
+        List<CrimeSlot> slots = new();
+        foreach (EmancipatedCrimeSlot eSlot in currentUserOcResults
+            .Where(x => x.difficulty == difficulty)
+            .Where(x => x.crimeSlot.user_id == userId)
+            .ToList())
+        {
+            slots.Add(eSlot.crimeSlot);
+        }
+        return slots;
+    }
+
+    string stringifyRoles(List<CrimeSlot> slots)
+    {
+        StringBuilder result = new();
+        for (int i = 0; i < slots.Count; i++)
+        {
+            result.Append($"{slots[i].position} - {slots[i].success_chance}");
+            if (i < slots.Count - 1)
+            {
+                result.Append(" | ");
+            }
+        }
+        return result.ToString();
+    }
+
+    List<string> getMissingRolesOfUserForCrime(int userId, string crimeName)
+    {
+        List<string> knownPositions = new();
+        List<string> result = new();
+        foreach(EmancipatedCrimeSlot eSlot in currentUserOcResults
+            .Where(x => x.difficulty == ocDifficultyMap[crimeName])
+            .Where(x => x.crimeSlot.user_id == userId).ToList())
+        {
+            knownPositions.Add(eSlot.crimeSlot.position);
+        }
+        List<string> uniqueCrimePositions = new();
+        foreach (string position in ocPositionsMap[crimeName])
+        {
+            if (!uniqueCrimePositions.Contains(position))
+            {
+                uniqueCrimePositions.Add(position);
+            }
+        }
+        List<string> missingPositions = new();
+        foreach (string uniquePosition in uniqueCrimePositions)
+        {
+            if (!knownPositions.Contains(uniquePosition))
+            {
+                missingPositions.Add(uniquePosition);
+            }
+        }
+        for (int i = 0; i < missingPositions.Count(); i++)
+        {
+            result.Add(missingPositions[i]);
+        }
+        return result;
+    }
+
+    string getUsernameFor(int userId)
+    {
+        if (usernameMap.ContainsKey(userId))
+        {
+            return usernameMap[userId];
+        } else
+        {
+            return "UserID " + userId.ToString();
+        }
+    }
+
+    bool showAllOcsTable = false;
+    bool showTieredUserOverview = false;
+    enum OcViews
+    {
+        allOcs,
+        tieredUsers
+    }
+    void changeOcView(OcViews targetView)
+    {
+        switch (targetView)
+        {
+            case OcViews.allOcs: showAllOcsTable = true; showTieredUserOverview = false; break;
+            case OcViews.tieredUsers:
+                if (ocDifficultyMap.ContainsKey(currentTargetOc))
+                {
+                    setupTieredUsers(currentTargetOc);
+                    showAllOcsTable = false; showTieredUserOverview = true;
+                }
+                break;
+        }
+    }
+
+    void setupTieredUsers(string targetOc)
+    {
+        assignedUsers = new();
+        availableUsers = new();
+        OcSlotsAssigned = new int[10, ocPositionsMap[targetOc].Length];
+        currentUserOcResults = getLatestUserOcResultsFromCrimes(getCrimes());
+        foreach (EmancipatedCrimeSlot slot in currentUserOcResults.Where(x => x.crimeName == targetOc).ToList())
+        {
+            if (!availableUsers.Contains(slot.crimeSlot.user_id) && usernameMap.ContainsKey(slot.crimeSlot.user_id))
+            {
+                availableUsers.Add(slot.crimeSlot.user_id);
+            }
+        }
+        foreach (EmancipatedCrimeSlot slot in currentUserOcResults.Where(x => x.difficulty == ocDifficultyMap[targetOc]))
+        {
+            if (!missingRolesOfUser.ContainsKey(slot.crimeSlot.user_id))
+            {
+                missingRolesOfUser.Add(slot.crimeSlot.user_id, getMissingRolesOfUserForCrime(slot.crimeSlot.user_id, targetOc));
+            }
+        }
+    }
+    void TestMoveAssignedUsers()
+    {
+        int firstElement = assignedUsers.First();
+        assignedUsers.Remove(firstElement);
+        assignedUsers.Add(firstElement);
+    }
+    void SetOcTestData()
+    {
+
+        CrimeSlot slot1 = new CrimeSlot()
+            {
+                position = "Muscle",
+                user_id = 1,
+                success_chance = 61
+            };
+        CrimeSlot slot2 = new CrimeSlot()
+            {
+                position = "Muscle",
+                user_id = 2,
+                success_chance = 62
+            };
+        CrimeSlot slot3 = new CrimeSlot()
+            {
+                position = "Muscle",
+                user_id = 3,
+                success_chance = 63
+            };
+        Crime test1 = new Crime()
+            {
+                id = 100,
+                name = "Break the Bank",
+                difficulty = 8,
+                slots = new List<CrimeSlot>() { slot1, slot2, slot3 }
+            };
+        CrimeSlot slot4 = new CrimeSlot()
+            {
+                position = "Muscle",
+                user_id = 4,
+                success_chance = 64
+            };
+        CrimeSlot slot5 = new CrimeSlot()
+            {
+                position = "Muscle",
+                user_id = 5,
+                success_chance = 65
+            };
+        CrimeSlot slot6 = new CrimeSlot()
+            {
+                position = "Muscle",
+                user_id = 6,
+                success_chance = 66
+            };
+        Crime test2 = new Crime()
+            {
+                id = 200,
+                name = "Break the Bank",
+                difficulty = 8,
+                slots = new List<CrimeSlot>() { slot4, slot5, slot6 }
+            };
+        setCrimes(new List<Crime>() { test1, test2 });
+        changeOcView(OcViews.tieredUsers);
+    }
+
+    private static HttpClient sharedClient = new()
+    {
+        BaseAddress = new Uri("https://api.torn.com"),
+    };
+
+    void LoadOcDataFromApi()
+    {
+        LoadOcDataFromApi(0);
+    }
+    async void LoadOcDataFromApi(int offset)
+    {
+        if(apikey == "")
+        {
+            return;
+        }
+
+        using HttpResponseMessage response = await sharedClient.GetAsync(String.Format("v2/faction/crimes?key={0}&cat=completed&offset={1}", apikey, offset));
+
+        response.EnsureSuccessStatusCode();
+
+        string? jsonResponse = await response.Content.ReadAsStringAsync();
+
+        int nextOffset = await addToCrimesFromJson(jsonResponse);
+        if (nextOffset > 0)
+        {
+            LoadOcDataFromApi(nextOffset);
+        }
+        await fillUsernameMapForFaction();
+        changeOcView(OcViews.allOcs);
+        this.StateHasChanged();
+    }
+
+    async Task<int> addToCrimesFromJson(string jsonData)
+    {
+        OCData ocData = System.Text.Json.JsonSerializer.Deserialize<OCData>(jsonData);
+        List<Crime> ocCrimes = ocData.crimes;
+        int addedCrimeAmount = addCrimes(ocData.crimes.OrderByDescending(x => x.executed_at).ToList());
+
+        await fillItemNamesMapForCrimes(ocData.crimes);
+        int nextOffset = 0; //0 = no new call required
+        if (ocData._metadata.next != null)
+        {
+            nextOffset = int.Parse(ocData._metadata.next.Split(new string[] { "offset=" }, StringSplitOptions.None)[1].Split(new string[] { "&" }, StringSplitOptions.None)[0]);
+        }
+        return nextOffset;
+    }
+
+    SortedList<int, string> itemNamesMap = new();
+
+    async Task fillItemNamesMapForCrimes(List<Crime> crimes)
+    {
+        foreach (Crime crime in crimes)
+        {
+            if(crime.status != "Failure" && crime.rewards.items.Count > 0)
+            {
+                foreach(Item item in crime.rewards.items)
+                {
+                    if (!itemNamesMap.ContainsKey(item.id))
+                    {
+                        itemNamesMap.Add(item.id, await getItemNameById(item.id));
+                    }
+                } 
+            }
+        }
+    }
+
+    async Task<string> getItemNameById(int itemId)
+    {
+        using HttpResponseMessage response = await sharedClient.GetAsync(String.Format("v2/torn/items?key={0}&id={1}", apikey, itemId));
+
+        response.EnsureSuccessStatusCode();
+
+        string? jsonResponse = await response.Content.ReadAsStringAsync();
+
+
+        DetailedItems itemsData = System.Text.Json.JsonSerializer.Deserialize<DetailedItems>(jsonResponse);
+        return itemsData.items[0].name;
+    }
+
+    SortedList<int, string> usernameMap = new();
+
+    async Task fillUsernameMapForFaction()
+    {
+        using HttpResponseMessage response = await sharedClient.GetAsync(String.Format("v2/faction/members?key={0}", apikey));
+
+        response.EnsureSuccessStatusCode();
+
+        string? jsonResponse = await response.Content.ReadAsStringAsync();
+
+        FactionMembers usersData = System.Text.Json.JsonSerializer.Deserialize<FactionMembers>(jsonResponse);
+        foreach (FactionMember member in usersData.members)
+        {
+            if (!usernameMap.ContainsKey(member.id))
+            {
+                usernameMap.Add(member.id, member.name);
+            }
+        }
+    }
+
+    string order_lvl = "asc";
+    void OrderCrimesByLvl()
+    {
+        if (order_lvl == "asc")
+        {
+            setCrimes(getCrimes().OrderByDescending(x => x.difficulty).ToList());
+            order_lvl = "desc";
+        } else
+        {
+            setCrimes(getCrimes().OrderBy(x => x.difficulty).ToList());
+            order_lvl = "asc";
+        }
+    }
+
+    string order_name = "asc";
+    void OrderCrimesByName()
+    {
+        if (order_name == "asc")
+        {
+            setCrimes(getCrimes().OrderByDescending(x => x.name).ToList());
+            order_name = "desc";
+        }
+        else
+        {
+            setCrimes(getCrimes().OrderBy(x => x.name).ToList());
+            order_name = "asc";
+        }
+    }
+
+    string order_time = "asc";
+    void OrderCrimesByTime()
+    {
+        if (order_time == "asc")
+        {
+            setCrimes(getCrimes().OrderByDescending(x => x.executed_at).ToList());
+            order_time = "desc";
+        }
+        else
+        {
+            setCrimes(getCrimes().OrderBy(x => x.executed_at).ToList());
+            order_time = "asc";
+        }
+    }
+
+    string order_rewards = "asc";
+    void OrderCrimesByRewards()
+    {
+        List<Crime> rewardlessCrimes = new List<Crime>();
+        List<Crime> moneyRewardCrimes = new List<Crime>();
+        List<Crime> itemRewardCrimes = new List<Crime>();
+        List<Crime> resultList = new List<Crime>();
+        if (order_rewards == "asc")
+        {
+            rewardlessCrimes = getCrimes().Where(x => x.rewards == null).ToList();
+            moneyRewardCrimes = getCrimes().Where(x => x.rewards != null).Where(x => x.rewards.money > 0).OrderByDescending(x => x.rewards.money).ToList();
+            itemRewardCrimes = getCrimes().Where(x => x.rewards != null).Where(x => x.rewards.money == 0).OrderByDescending(x => itemNamesMap[x.rewards.items[0].id]).ThenByDescending(x => x.rewards.items[0].quantity).ToList();
+            resultList.AddRange(moneyRewardCrimes);
+            resultList.AddRange(itemRewardCrimes);
+            resultList.AddRange(rewardlessCrimes);
+            order_rewards = "desc";
+        }
+        else
+        {
+            rewardlessCrimes = getCrimes().Where(x => x.rewards == null).ToList();
+            moneyRewardCrimes = getCrimes().Where(x => x.rewards != null).Where(x => x.rewards.money > 0).OrderBy(x => x.rewards.money).ToList();
+            itemRewardCrimes = getCrimes().Where(x => x.rewards != null).Where(x => x.rewards.money == 0).OrderBy(x => itemNamesMap[x.rewards.items[0].id]).ThenBy(x => x.rewards.items[0].quantity).ToList();
+            resultList.AddRange(rewardlessCrimes);
+            resultList.AddRange(itemRewardCrimes);
+            resultList.AddRange(moneyRewardCrimes);
+            order_rewards = "asc";
+        }
+        setCrimes(resultList);
+    }
+
+    int addCrimes(List<Crime> crimes)
+    {
+        int amountAdded = 0;
+        foreach(Crime crime in crimes)
+        {
+            if (!crimeIdList.Contains(crime.id))
+            {
+                crimeIdList.Add(crime.id);
+                CrimeContainer container = new();
+                container.crime = crime;
+                container.opened = false;
+                Crimes.Add(container);
+                amountAdded++;
+            }
+        }
+        return amountAdded;
+    }
+
+    void setCrimes(List<Crime> crimes)
+    {
+        List<CrimeContainer> crimesList = new();
+        foreach(Crime crime in crimes)
+        {
+            CrimeContainer crimeContainer = new();
+            crimeContainer.crime = crime;
+            crimeContainer.opened = false;
+            crimesList.Add(crimeContainer);
+        }
+        Crimes = crimesList;
+    }
+    List<Crime> getCrimes()
+    {
+        List<Crime> crimesList = new();
+        foreach(CrimeContainer crimeContainer in Crimes)
+        {
+            crimesList.Add(crimeContainer.crime);    
+        }
+        return crimesList;
+    }
+
+    public string GenerateFullOcCsv(List<Crime> crimes)
+    {
+        var csv = new StringBuilder();
+        csv.AppendLine("OC-Name,OC-Level,Time,Role1,User1,SuccessChance1,Role2,User2,SuccessChance2,Role3,User3,SuccessChance3,Role4,User4,SuccessChance4,Role5,User5,SuccessChance5,Role6,User6,SuccessChance6");
+        foreach(Crime crime in crimes)
+        {
+            csv.AppendLine($"{crime.name},{crime.difficulty},{DateTime.UnixEpoch.AddSeconds(Convert.ToDouble(crime.executed_at))},{csvCrimeSlot(crime, 0)},{csvCrimeSlot(crime, 1)},{csvCrimeSlot(crime, 2)},{csvCrimeSlot(crime, 3)},{csvCrimeSlot(crime, 4)},{csvCrimeSlot(crime, 5)}");
+        }
+        return csv.ToString();
+    }
+
+    private async Task DownloadCurrentOcChancesForAllUsersCsv()
+    {
+        var csvContent = GenerateCurrentOcChancesForAllUsersCsv(getCrimes());
+        //var csvContent = GenerateTestCsv();
+        await JS.InvokeVoidAsync("downloadCsvFile", "userOcChances.csv", csvContent);
+
+    }
+    public string GenerateCurrentOcChancesForAllUsersCsv(List<Crime> crimes)
+    {
+        List<EmancipatedCrimeSlot> eSlots = getLatestUserOcResultsFromCrimes(crimes);
+        //eSlots = eSlots.OrderBy(x => x.userName).ThenByDescending(x => x.difficulty).ThenBy(x => x.crimeName).ToList<EmancipatedCrimeSlot>();
+        eSlots = eSlots.OrderByDescending(x => x.difficulty).ThenBy(x => x.userName).ThenByDescending(x => x.crimeSlot.success_chance).ThenBy(x => x.crimeName).ToList<EmancipatedCrimeSlot>();
+        var csv = new StringBuilder();
+        csv.AppendLine("OC Name,OC Level,User,Role,SuccessChance,Most Recent Data");
+        foreach (EmancipatedCrimeSlot eSlot in eSlots)
+        {
+            string user = "TornID: " + eSlot.crimeSlot.user_id.ToString();
+            if (usernameMap.ContainsKey(eSlot.crimeSlot.user_id))
+            {
+                user = usernameMap[eSlot.crimeSlot.user_id];
+            }
+            csv.AppendLine($"{eSlot.crimeName},{eSlot.difficulty},{user},{eSlot.crimeSlot.position},{eSlot.crimeSlot.success_chance},{DateTime.UnixEpoch.AddSeconds(Convert.ToDouble(eSlot.executed_at))}");
+
+        }
+        return csv.ToString();
+    }
+
+    public List<EmancipatedCrimeSlot> getLatestUserOcResultsFromCrimes(List<Crime> crimes)
+    {
+        List<EmancipatedCrimeSlot> eSlots = new();
+        foreach (Crime crime in crimes)
+        {
+            foreach (CrimeSlot slot in crime.slots)
+            {
+                EmancipatedCrimeSlot eSlot = new();
+                eSlot.crimeName = crime.name;
+                if (usernameMap.ContainsKey(slot.user_id))
+                {
+                    eSlot.userName = usernameMap[slot.user_id];
+                }
+                else
+                {
+                    eSlot.userName = slot.user_id.ToString();
+                }
+                eSlot.crimeSlot = slot;
+                eSlot.difficulty = crime.difficulty;
+                eSlot.executed_at = crime.executed_at;
+                if (eSlots.Contains(eSlot))
+                {
+                    int index = eSlots.IndexOf(eSlot);
+                    EmancipatedCrimeSlot oldESlot = eSlots[index];
+                    if (eSlot.executed_at > oldESlot.executed_at)
+                    {
+                        eSlots[index] = eSlot;
+                    }
+                }
+                else
+                {
+                    eSlots.Add(eSlot);
+                }
+            }
+        }
+        return eSlots;
+    }
+
+    string csvCrimeSlot(CrimeSlot slot)
+    {
+        string result = "";
+        string user = "";
+        if (usernameMap.ContainsKey(slot.user_id))
+        {
+            user = usernameMap[slot.user_id];
+        }
+        else
+        {
+            user = slot.user_id.ToString();
+        }
+        result = String.Format("{0},{1},{2}", slot.position, user, slot.success_chance.ToString());
+        return result;
+    }
+    string csvCrimeSlot(Crime crime, int slotId)
+    {
+        string result = "";
+        if (slotId + 1 <= crime.slots.Count)
+        {
+            result = csvCrimeSlot(crime.slots[slotId]);
+        } else
+        {
+            result = ",,";
+        }
+        return result;
+    }
+
+    public string GenerateTestCsv()
+    {
+        var csv = new StringBuilder();
+        csv.AppendLine("Id,Name,Email");
+        string test = ",,,";
+        csv.AppendLine($"{test}");
+        return csv.ToString();
+    }
+
+    public void TestMetadataJSON()
+    {
+        string json = "{\"prev\": null,\"next\": \"https://api.torn.com/v2/faction/crimes?&cat=completed&offset=100\",\"links\": {\"next\": \"https://api.torn.com/v2/faction/crimes?&cat=completed&offset=100\",\"prev\": null}}";
+        Console.WriteLine(json);
+        _Metadata _metadata = System.Text.Json.JsonSerializer.Deserialize<_Metadata>(json);
+        Console.WriteLine("test");
+    }
+
+    private async Task DownloadFullOcCsv()
+    {
+        var csvContent = GenerateFullOcCsv(getCrimes());
+        //var csvContent = GenerateTestCsv();
+        await JS.InvokeVoidAsync("downloadCsvFile", "users.csv", csvContent);
+
+    }
+
+    private async Task DownloadFullOcJson()
+    {
+        OCData ocData = new();
+        ocData.crimes = getCrimes();
+        var jsonContent = System.Text.Json.JsonSerializer.Serialize(ocData);
+        await JS.InvokeVoidAsync("downloadJsonFile", "ocData.json", jsonContent);
+    }
+
+    [Inject]
+    private IJSRuntime JS{ get; set; }
+
+    //START UPLOAD
+    private async Task UploadOcJson(InputFileChangeEventArgs e)
+    {
+        //MemoryStream ms = new MemoryStream();
+        //await e.File.OpenReadStream().CopyToAsync(ms);
+        /*var stream = e.File.OpenReadStream();
+        var reader = new StreamReader(stream);
+        string foo = reader.ReadToEnd();
+        string bar = "";
+        await addToCrimesFromJson(foo);*/
+    }
+    //END UPLOAD
+}

@@ -1,0 +1,23 @@
+﻿body {
+}
+.floatDiv {
+    display: inline-block;
+    max-width: 1000px;
+    overflow: hidden;
+    vertical-align: top;
+}
+table.selectionTable {
+    color: red;
+}
+table.selectionTable {
+    table-layout: fixed;
+    width: 100%;
+}
+th, td {
+    border: 1px solid black;
+    padding: 3px;
+}
+option[style*="hidden"] {
+    font-size:1px;
+    padding:10px 0;
+}
